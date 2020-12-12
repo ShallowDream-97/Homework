@@ -1,0 +1,13 @@
+/* 
+this a correct example of SEAL 
+*/
+var a Int;
+func main() Void{
+    var a Int;
+    
+    if a > 0 {
+		a=3;
+        break;
+	}
+    return;
+}

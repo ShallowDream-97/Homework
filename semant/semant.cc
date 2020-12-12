@@ -11,20 +11,12 @@ static ostream& error_stream = cerr;
 static int semant_errors = 0;
 static Decl curr_decl = 0;
 
-typedef SymbolTable<Symbol, Symbol> ObjectEnvironment; // name, type
+// typedef SymbolTable<Symbol, Symbol> ObjectEnvironment; // name, type
+typedef SymbolTable<Symbol, CallDecl> CallEnvironment; // call environment
+typedef SymbolTable<Symbol, VariableDecl> VarEnvironment; // variable environment
 
-typedef std::map<Symbol, Symbol> Map;
-Map callMap;
-Map gvMap;
-Map lvMap;
-
-
-
-ObjectEnvironment objectEnv;
-ObjectEnvironment CallEnv;//call
-ObjectEnvironment GvEnv;//globalvar
-ObjectEnvironment LvEnv;//localvar
-
+static CallEnvironment callEnv;
+static VarEnvironment varEnv;
 
 ///////////////////////////////////////////////
 // helper func
@@ -45,10 +37,6 @@ static ostream& internal_error(int lineno) {
     error_stream << "FATAL:" << lineno << ": ";
     return error_stream;
 }
-
-typedef std::vector<Symbol> FuncParameter;
-typedef std::map<Symbol, FuncParameter> Map2;
-Map2 funcParaMap;
 
 //////////////////////////////////////////////////////////////////////
 //
@@ -106,6 +94,10 @@ static void initialize_constants(void) {
 static bool sameType(Symbol name1, Symbol name2) {
     return strcmp(name1->get_string(), name2->get_string()) == 0;
 }
+
+static bool sameName(Symbol name1, Symbol name2) {
+    return strcmp(name1->get_string(), name2->get_string()) == 0;
+}
     //CALL一开始是空的，只有一个空指针。所以先要创建一个开始的scope，才能enterscope
     //遇到新scope要先enterscope
     //遇到call：
@@ -118,7 +110,10 @@ static bool sameType(Symbol name1, Symbol name2) {
     //
 
 static void install_calls(Decls decls) {//这个函数与scope无关，把所有符合条件的都装进去
-    
+    // Since call declaractions can only put at the global scope,
+    // there should always exists one scope for call declaraction.
+    callEnv.enterscope();
+
     for(int i = decls->first(); decls->more(i); i = decls->next(i))//遍历decl的方法，从dumptype中拷贝
     {
         Symbol type = decls->nth(i)->getType();
@@ -126,70 +121,82 @@ static void install_calls(Decls decls) {//这个函数与scope无关，把所有
 
         if(decls->nth(i)->isCallDecl())
         {
-            if (type != Int && type != String && type != Void && type != Float && type != Bool) {//返回类型
+            if (!sameType(type, Int) && !sameType(type, Void)
+                && !sameType(type, String) && !sameType(type, Float)
+                && !sameType(type, Bool)) {//返回类型
                 semant_error(decls->nth(i)) << "The returnType must be int or string or void or float or bool." << std::endl;
+                continue;
             }
 
-            if(callMap[name]!=NULL){//current scope 有重名
+            if(callEnv.probe(name) != NULL){//current scope 有重名
                 semant_error(decls->nth(i))<<"Function "<< name <<" has been defined."<<std::endl;
+                continue;
             }
             
             if(!isValidCallName(name)){//非法
                 semant_error(decls->nth(i))<<"The function can‘t name ’printf‘."<<std::endl;
+                continue;
             }
-            callMap[name]=type;
-            // std::cout<<name<<type<<std::endl;
-            // decls->nth(i)->checkPara();
+
+            callEnv.addid(name, 
+                new CallDecl((CallDecl)(decls->nth(i))));
         }    
     }
 }
 
 static void install_globalVars(Decls decls) {
-    for(int i = decls->first(); decls->more(i); i = decls->next(i))//遍历decl的方法，从dumptype中拷贝
-    {
-        Symbol type = decls->nth(i)->getType();
-        Symbol name = decls->nth(i)->getName();
+    // Since variable declaractions can appear in any stmtBlocks,
+    // there may exist some variable declaractions with the same name
+    // but defined in different scope
+    varEnv.enterscope();
 
-       if (!decls->nth(i)->isCallDecl()) {
-           std::cout << "fuck!" << std::endl; // --------------------------------------
-           if (type == Void) {
-                semant_error(decls->nth(i)) << "The variable must be int or string or void or float or bool." << std::endl;
-            } 
-            if (name == print) {
-                semant_error(decls->nth(i)) << "The variable can‘t name ’printf‘." << std::endl;
-            }
-            if (gvMap[name] != NULL) {
-                semant_error(decls->nth(i)) <<"the global variable "<<name<<" has been defined."<<std::endl;
-            }
-            gvMap[name] = type;
-        }
-    }
+    for(int i = decls->first(); decls->more(i); i = decls->next(i))//遍历decl的方法，从dumptype中拷贝
+        if (!decls->nth(i)->isCallDecl())
+            decls->nth(i)->check();
 }
 
 static void check_calls(Decls decls) {
     for (int i=decls->first(); decls->more(i); i=decls->next(i)) {
         if (decls->nth(i)->isCallDecl()) {
             decls->nth(i)->check();
-            decls->nth(i)->checkPara();
-            // lvMap.clear();
         }
     }
 }
 
 static void check_main() {//直接看没有main报错就行
-    if(callMap[Main]==nullptr)
-        semant_error()<<"ERROR:No Main!"<<std::endl;
+    CallDecl callDecl;
+    Symbol returnType;
+    Variables paras;
+
+    if(!callEnv.probe(Main)) {
+        semant_error()<<"main function not found"<<std::endl;
+    } else {
+        callDecl = *callEnv.probe(Main);
+        paras = callDecl->getVariables();
+        returnType = callDecl->getType();
+
+        if (!sameType(returnType, Void))
+            semant_error(callDecl) << "main function shouold have return type Void." << std::endl;
+        if (paras->len() != 0)
+            semant_error(callDecl) << "main function should have empty parameters." << std::endl;
+    }
 }
 
 void VariableDecl_class::check() {//变量不可为Void类型
     Symbol type = this->getType();
     Symbol name = this->getName();
 
-    if(type == Void)
-        semant_error()<<"This variable "<<name<<" can't be void."<<std::endl;
-    
-    lvMap[name]=type;
-    objectEnv.addid(name,&type);
+    if (sameType(type, Void)) {
+        semant_error(this) << "The variable must be int or string or void or float or bool." << std::endl;
+    }
+    if (name == print) {
+        semant_error(this) << "The variable can‘t name ’printf‘." << std::endl;
+    }
+    if (varEnv.probe(name) != NULL) {
+        semant_error(this) <<"the global variable "<< name <<" has been defined."<<std::endl;
+    }
+    varEnv.addid(name, 
+        new VariableDecl(static_cast<VariableDecl>(this)));
 }
 
 void CallDecl_class::check() {
@@ -199,54 +206,33 @@ void CallDecl_class::check() {
     //调用函数检查关键字和变量
     Symbol returnType = this->getType();
     StmtBlock body = this->getBody();
-    Symbol callName = this->getName();
-    Variables paras = this->getVariables();
-    objectEnv.enterscope();
+    Symbol name = this->getName();
 
-    //先看main是不是符合条件
-    if (callName == Main) {
-        if (paras->len() != 0) 
-            semant_error(this) << "Main function can't have parameter(s)." << std::endl;
-        if (callMap[Main] != Void) 
-            semant_error(this) << "Main function must return Void type." << std::endl;
-    } 
+    varEnv.enterscope();
     //看参数的问题
-    for (int i=paras->first(); paras->more(i); i=paras->next(i))
-    {
-        Symbol Name = paras->nth(i)->getName();
-        Symbol Type = paras->nth(i)->getType();
+    checkPara();
 
-        if(objectEnv.lookup(Name)!=NULL)
-            semant_error(this)<< "This name: "<<Name<< " have been used in same function."<<std::endl;
-        if(Type==Void)
-            semant_error(this)<<"Type of the parameter: "<<Name<<" can not be Void."<<std::endl;
-        objectEnv.addid(Name,new Symbol(Type));
-        lvMap[Name]=Type;
-    }
     //检查返回类型
     body->check(returnType);
     if (!body->isReturn()) {
         semant_error(this) << "Function " << name << " must have an overall return statement." << std::endl;
     }
 
-    
-    
-
-    // body->checkBreakContinue();
-    objectEnv.exitscope();
+    body->checkBreakContinue();
+    varEnv.exitscope();
 }
 
-// correct
+
 void StmtBlock_class::check(Symbol type) {
     Stmts stmts = this->getStmts(); 
     VariableDecls vars = this->getVariableDecls();
 
-    for (int j=stmts->first(); stmts->more(j); j=stmts->next(j)) {
-        stmts->nth(j)->check(type);
-    }
     // 关键字和变量检查
     for (int i=vars->first(); vars->more(i); i=vars->next(i)) {
         vars->nth(i)->check();
+    }
+    for (int j=stmts->first(); stmts->more(j); j=stmts->next(j)) {
+        stmts->nth(j)->check(type);
     }
 }
 
@@ -254,21 +240,33 @@ void IfStmt_class::check(Symbol type) {//if的check考虑else和then存在与否
     Expr condition = this->getCondition();
     StmtBlock thenStmtBlock = this->getThen();
     StmtBlock elseStmtBlock = this->getElse();
+
     Symbol conditionType = condition->checkType();
-    if (conditionType != Bool) 
+
+    if (!sameType(conditionType, Bool)) 
         semant_error(this) << "Condition's type must be Bool"<< std::endl;
+    
+    varEnv.enterscope();
     thenStmtBlock->check(type);
+    varEnv.exitscope();
+
+    varEnv.enterscope();
     elseStmtBlock->check(type);
+    varEnv.exitscope();
 }
 
 void WhileStmt_class::check(Symbol type) {//报错与if类似
     Expr condition = this->getCondition();
     StmtBlock body = this->getBody();
+
     Symbol conditionType = condition->checkType();
-    if (conditionType != Bool) 
+    
+    if (!sameType(conditionType, Bool)) 
         semant_error(this) << "Condition's type must be Bool"<< std::endl;
+    
+    varEnv.enterscope();
     body->check(type);
-    body->checkBreakContinue();
+    varEnv.exitscope();
 }
 
 void ForStmt_class::check(Symbol type) {//for循环中间条件语句的报错情况与if类似，
@@ -276,29 +274,30 @@ void ForStmt_class::check(Symbol type) {//for循环中间条件语句的报错�
     Expr condition = this->getCondition();
     Expr loop = this->getLoop();
     StmtBlock body = this->getBody();
+
     init->checkType();
     Symbol conditionType = condition->checkType();
-    if (conditionType != Bool) {
+    if (!condition->is_empty_Expr() && !sameType(conditionType, Bool)) {
         semant_error(this) << "Condition's type must be Bool"<< std::endl;
     }
     loop->checkType();
-    body->check(type);  
+
+    varEnv.enterscope();
+    body->check(type);
+    varEnv.exitscope();
 }
-////////////////////////////////////////
+
 void StmtBlock_class::checkBreakContinue() {
     Stmts stmts = this->getStmts();
+
     for (int i=stmts->first(); stmts->more(i); i=stmts->next(i)) {
-        if (stmts->nth(i)->isSafe()) {
-            continue;
-        } else  {
-            stmts->nth(i)->checkBreakContinue();
-        } 
+        stmts->nth(i)->checkBreakContinue();
     }
 }
 
 void IfStmt_class::checkBreakContinue() {
-    this->thenexpr->checkBreakContinue();
-    this->elseexpr->checkBreakContinue();
+    this->getThen()->checkBreakContinue();
+    this->getElse()->checkBreakContinue();
 }
 
 void BreakStmt_class::checkBreakContinue() {
@@ -308,49 +307,51 @@ void BreakStmt_class::checkBreakContinue() {
 void ContinueStmt_class::checkBreakContinue() {
     semant_error(this) << "continue must be used in a loop sentence" << std::endl;
 }
-void ContinueStmt_class::check(Symbol type) {
 
+void ContinueStmt_class::check(Symbol type) {
+    // empty
 }
 
 void BreakStmt_class::check(Symbol type) {
-
+    // empty
 }
 
 void CallDecl_class::checkPara() {
-    // Symbol callName = this->getName();
-    // Variables paras = this->getVariables();
-    // Symbol returnType = this->getType();
-    // StmtBlock body = this->getBody();
+    Symbol callName = this->getName();
+    Variables paras = this->getVariables();
+    for (int i=paras->first(); paras->more(i); i=paras->next(i))
+    {
+        Symbol paraName = paras->nth(i)->getName();
+        Symbol paraType = paras->nth(i)->getType();
 
-    // FuncParameter funcParameter;
-    // for (int i=paras->first(); paras->more(i); i=paras->next(i)) {
-    //     Symbol paraName = paras->nth(i)->getName();
-    //     Symbol paraType = paras->nth(i)->getType();
-    //     funcParameter.push_back(paraType);
-    // }
-    // funcParaMap[callName] = funcParameter;
+        if(varEnv.probe(paraName) != NULL)
+            semant_error(this)<< "This name: "<< paraName << " have been used in same function."<< std::endl;
+        if(sameType(paraType, Void))
+            semant_error(this)<<"Type of the parameter: "<< paraName <<" can not be Void."<< std::endl;
+        varEnv.addid(paraName, new VariableDecl(variableDecl(paras->nth(i))));
+    }
 }
 
 void ReturnStmt_class::check(Symbol type) {//return的类型必须和声明类型一致
     Expr value = this->getValue();
-    Symbol valueType = value->checkType();
-    if (value->is_empty_Expr())
-    {
-        if (type != Void) 
-            semant_error(this) << "You should return "<< type<<"not void."<<std::endl;
+    Symbol valueType;
+
+    if (value->is_empty_Expr()) {
+        if (!sameType(type, Void)) 
+            semant_error(this) << "Returns Void, but need "<< type <<std::endl;
+    } else {
+        valueType = value->checkType();
+        if (!sameType(type, valueType)) 
+            semant_error(this) <<  "Returns "<< valueType << ", but need "<< type <<std::endl;
     }
-    else 
-        if (type != valueType) 
-            semant_error(this) <<  "You should return "<< type<<"not "<<valueType <<std::endl;
 }
 
 Symbol Call_class::checkType(){
     //这个函数要考虑，printf至少有一个参数，输出参数是字符串
     Symbol callName = this->getName();
     Actuals actuals = this->getActuals();
-    unsigned int j = 0;
     
-    if (callName == print) {
+    if (sameName(callName, print)) {
         if (actuals->len() == 0) {
             semant_error(this) << "printf function must has at last one parameter of type String." << endl;
             this->setType(Void);
@@ -364,26 +365,33 @@ Symbol Call_class::checkType(){
         return this->type;
     }
 
+    // case for non-printf call expr
+    if (!callEnv.lookup(callName)) {
+        semant_error(this) << "Function " << callName << " has not been defined" << endl;
+        
+        this->setType(Void);
+        return this->type;
+    }
+
+    CallDecl callDecl = *callEnv.lookup(callName);
     if (actuals->len() > 0) {
-        if (actuals->len() != int(funcParaMap[callName].size())) {
+        if (actuals->len() != callDecl->getVariables()->len()) {
             semant_error(this) << "Wrong number of paras" << endl;
         }
-        for (int i=actuals->first(); actuals->more(i) && j<funcParaMap[callName].size(); i=actuals->next(i)) {
+        for (int i=actuals->first(), j = 0; 
+            actuals->more(i) && j <  callDecl->getVariables()->len(); 
+            i=actuals->next(i), j++) {
+            
             Symbol sym = actuals->nth(i)->checkType();
             // check function call's paras fit funcdecl's paras
-            if (sym != funcParaMap[callName][j]) {
-                semant_error(this) << "Function " << callName << ", type " << sym << " of parameter a does not conform to declared type " << funcParaMap[callName][j] << endl;
-            }
-            ++j;      
+            if (!sameType(sym, callDecl->getVariables()->nth(j)->getType())) {
+                semant_error(this) << "Function " << callName << ", type " << sym 
+                    << " of parameters " << "does not conform to declared type " << callDecl->getVariables()->nth(j)->getType()->get_string() << endl;
+            }  
         }
     }
     
-    if (callMap[callName] == NULL) {
-        semant_error(this) << "Object " << callName << " has not been defined" << endl;
-        this->setType(Void);
-        return this->type;
-    } 
-    this->setType(callMap[callName]);
+    this->setType(callDecl->getType());
     return this->type;
 }
 
@@ -395,45 +403,44 @@ Symbol Actual_class::checkType(){
 
 Symbol Assign_class::checkType(){
 
-    if (objectEnv.lookup(this->lvalue) == NULL && gvMap[this->lvalue] == NULL) {
-        semant_error(this) << "value no defined" << endl;
-    } 
-    Symbol lvalueType = lvMap[this->lvalue];
+    if (varEnv.lookup(this->lvalue) == NULL) {
+        semant_error(this) << "object " << this->lvalue->get_string() << " has not been defined" << endl;
+    }
+
+    Symbol lvalueType = (*varEnv.lookup(this->lvalue))->getType();
     Symbol valueType = this->value->checkType();
-    if (lvalueType != valueType) {
+    if (!sameType(lvalueType, valueType)) {
         semant_error(this) << "Type should be same!" << std::endl;
     }
-    
     
     this->setType(valueType);
     return this->type;
 }
 
+
 Symbol Add_class::checkType(){
     Symbol Type1 = this->e1->checkType();
     Symbol Type2 = this->e2->checkType();
     
-    if (Type1 == Type2) {
+    if (sameType(Type1, Type2)) {
         if ( Type1 != Int && Type1 != Float ) {
-            semant_error(this) << "'===' must be int or float type , not" << Type1 << std::endl;
+            semant_error(this) << "'+' 's operands must be int or float type , not" << Type1 << std::endl;
             this->setType(Float);
             return this->type;
+        } else {
+            this->setType(Type1);
+            return this->type;
+        }
+    } else {
+        if ((Type1 == Float && Type2 == Int) || (Type1 == Int && Type2 == Float)) {
+            this->setType(Float);
+            return type;
+        } else {
+            semant_error(this) << "'+' 's operands should be same,or paras could exchanged." << std::endl;
+            this->setType(Float);
+            return type;
         }
     }
-    
-
-    else if ((Type1 == Float && Type2 == Int)||(Type1 == Int && Type2 == Float)) {
-        this->setType(Float);
-        return type;
-    } 
-
-    else {
-        semant_error(this) << "'+' 's paras should be same,or paras could exchanged." << std::endl;
-        this->setType(Float);
-        return type;
-    }
-    this->setType(Type1);
-    return this->type;
 }
 
 
@@ -441,102 +448,106 @@ Symbol Minus_class::checkType(){
     Symbol Type1 = this->e1->checkType();
     Symbol Type2 = this->e2->checkType();
 
-    if (Type1 == Type2) {
+
+    if (sameType(Type1, Type2)) {
         if ( Type1 != Int && Type1 != Float ) {
-           semant_error(this) << "'-' must be int or float type , not" << Type1 << std::endl;
+            semant_error(this) << "'-' 's operands must be int or float type , not" << Type1 << std::endl;
             this->setType(Float);
             return this->type;
+        } else {
+            this->setType(Type1);
+            return this->type;
         }
-    } 
-
-    else if ((Type1 == Float && Type2 == Int)||(Type1 == Int && Type2 == Float)) {
-        this->setType(Float);
-        return type;
+    } else {
+        if ((Type1 == Float && Type2 == Int) || (Type1 == Int && Type2 == Float)) {
+            this->setType(Float);
+            return type;
+        } else {
+            semant_error(this) << "'-' 's operands  should be same,or paras could exchanged." << std::endl;
+            this->setType(Float);
+            return type;
+        }
     }
-    
-     else {
-        semant_error(this) << "'-' 's paras should be same,or paras could exchanged." << std::endl;
-        this->setType(Float);
-        return type;
-    }
-    this->setType(Type1);
-    return this->type;
- 
 }
 
 Symbol Multi_class::checkType(){
     Symbol Type1 = this->e1->checkType();
     Symbol Type2 = this->e2->checkType();
 
-    if (Type1 == Type2) {
+    
+    if (sameType(Type1, Type2)) {
         if ( Type1 != Int && Type1 != Float ) {
-            semant_error(this) << "'*' must be int or float type , not" << Type1 << std::endl;
+            semant_error(this) << "'*' 's operands  must be int or float type , not" << Type1 << std::endl;
             this->setType(Float);
             return this->type;
+        } else {
+            this->setType(Type1);
+            return this->type;
         }
-    } else if ((Type1 == Float && Type2 == Int)||(Type1 == Int && Type2 == Float)) {
-        this->setType(Float);
-        return type;
     } else {
-        semant_error(this) << "'*' 's paras should be same,or paras could exchanged." << std::endl;
-        this->setType(Float);
-        return type;
+        if ((Type1 == Float && Type2 == Int) || (Type1 == Int && Type2 == Float)) {
+            this->setType(Float);
+            return type;
+        } else {
+            semant_error(this) << "'*' 's operands  should be same,or paras could exchanged." << std::endl;
+            this->setType(Float);
+            return type;
+        }
     }
-    this->setType(Type1);
-    return this->type;
- 
 }
 
 Symbol Divide_class::checkType(){
     Symbol Type1 = this->e1->checkType();
     Symbol Type2 = this->e2->checkType();
 
-    if (Type1 == Type2) {
+    
+    if (sameType(Type1, Type2)) {
         if ( Type1 != Int && Type1 != Float ) {
-            semant_error(this) << "'/' must be int or float type , not" << Type1 << std::endl;
+            semant_error(this) << "'/' 's operands must be int or float type , not" << Type1 << std::endl;
             this->setType(Float);
             return this->type;
+        } else {
+            this->setType(Type1);
+            return this->type;
         }
-    } else if ((Type1 == Float && Type2 == Int)||(Type1 == Int && Type2 == Float)) {
-        this->setType(Float);
-        return type;
     } else {
-        semant_error(this) << "'/' 's paras should be same,or paras could exchanged." << std::endl;
-        this->setType(Float);
-        return type;
+        if ((Type1 == Float && Type2 == Int) || (Type1 == Int && Type2 == Float)) {
+            this->setType(Float);
+            return type;
+        } else {
+            semant_error(this) << "'/' 's operands  should be same,or paras could exchanged." << std::endl;
+            this->setType(Float);
+            return type;
+        }
     }
-    this->setType(Type1);
-    return this->type;
-
 }
 
 Symbol Mod_class::checkType(){
     Symbol Type1 = this->e1->checkType();
     Symbol Type2 = this->e2->checkType();
 
-    if (Type1 == Type2) {
-        if ( Type1 != Int && Type1 != Float ) {
-            semant_error(this) << "'%' must be int or float type , not" << Type1 << std::endl;
-            this->setType(Float);
+    
+    if (sameType(Type1, Type2)) {
+        if ( Type1 != Int ) {
+            semant_error(this) << "'%''s operands  must be int type , not" << Type1 << std::endl;
+            this->setType(Int);
+            return this->type;
+        } else {
+            this->setType(Type1);
             return this->type;
         }
-    } else if ((Type1 == Float && Type2 == Int)||(Type1 == Int && Type2 == Float)) {
-        this->setType(Float);
-        return type;
     } else {
-        semant_error(this) << " '%' 's paras should be same,or paras could exchanged." << std::endl;
-        this->setType(Float);
+        semant_error(this) << "'%' 's operands  should be same" << std::endl;
+        this->setType(Int);
         return type;
     }
-    this->setType(Type1);
-    return this->type;
 
 }
 
 Symbol Neg_class::checkType(){
     Symbol Type1 = this->e1->checkType();
     if (Type1 != Int && Type1 != Float) {
-        semant_error(this)<<" '-''s paras should be int or float."<<endl;
+        semant_error(this)<<" '-' 's operands  should be int or float."<<endl;
     }
     this->setType(Type1);
     return this->type;
@@ -547,11 +558,12 @@ Symbol Lt_class::checkType(){
     Symbol Type2 = this->e2->checkType();
     if (Type1 == Type2) {
         if ( Type1 != Int && Type1 != Float ) {
-            semant_error(this) << "'<' must be int or float type , not" << Type1 << std::endl;
+            semant_error(this) << "'<' 's operands  must be int or float type , not" << Type1 << std::endl;
         }
     } else if (!(Type1 == Float && Type2 == Int) && !(Type1 == Int && Type2 == Float)) {
-        semant_error(this) << " '<' 's paras should be same,or paras could exchanged." << std::endl;
+        semant_error(this) << " '<' 's operands  should be same,or paras could exchanged." << std::endl;
     }
+
     this->setType(Bool);
     return this->type;
 }
@@ -561,10 +573,10 @@ Symbol Le_class::checkType(){
     Symbol Type2 = this->e2->checkType();
     if (Type1 == Type2) {
         if ( Type1 != Int && Type1 != Float && Type1 != Bool) {
-            semant_error(this) << "'<=' expr value must be int and float and bool type and Bool type, not " << Type1 << std::endl;
+            semant_error(this) << "'<=' 's operands must be int and float and bool type and Bool type, not " << Type1 << std::endl;
         }
     } else if (!(Type1 == Float && Type2 == Int) && !(Type1 == Int && Type2 == Float)) {
-        semant_error(this) << " '<=' 's paras should be same,or paras could exchanged." << std::endl;
+        semant_error(this) << " '<=' 's operands should be same,or paras could exchanged." << std::endl;
     }
     this->setType(Bool);
     return this->type;
@@ -576,10 +588,10 @@ Symbol Equ_class::checkType(){
     Symbol Type2 = this->e2->checkType();
     if (Type1 == Type2) {
         if ( Type1 != Int && Type1 != Float && Type1 != Bool) {
-            semant_error(this) << "'=' expr value must be int and float and bool type and Bool type, not " << Type1 << std::endl;
+            semant_error(this) << "'==' 's operands  must be int and float and bool type and Bool type, not " << Type1 << std::endl;
         }
     } else if (!(Type1 == Float && Type2 == Int) && !(Type1 == Int && Type2 == Float)) {
-        semant_error(this) << "'=' 's paras should be same,or paras could exchanged." << std::endl;
+        semant_error(this) << "'==' 's operands  should be same,or paras could exchanged." << std::endl;
     }
     this->setType(Bool);
     return this->type;
@@ -590,7 +602,7 @@ Symbol Neq_class::checkType(){
     Symbol Type2 = this->e2->checkType();
     if (Type1 == Type2) {
         if ( Type1 != Int && Type1 != Float && Type1 != Bool) {
-            semant_error(this) << "'!=' expr value must be int and float and bool type and Bool type, not " << Type1 << std::endl;
+            semant_error(this) << "'!=' 's operands must be int and float and bool type and Bool type, not " << Type1 << std::endl;
         }
     } else if (!(Type1 == Float && Type2 == Int) && !(Type1 == Int && Type2 == Float)) {
         semant_error(this) << "'!=' 's paras should be same,or paras could exchanged." << std::endl;
@@ -605,10 +617,10 @@ Symbol Ge_class::checkType(){
     Symbol Type2 = this->e2->checkType();
     if (Type1 == Type2) {
         if ( Type1 != Int && Type1 != Float && Type1 != Bool) {
-            semant_error(this) << "'>=' expr value must be int and float and bool type and Bool type, not " << Type1 << std::endl;
+            semant_error(this) << "'>=' 's operands  must be int and float and bool type and Bool type, not " << Type1 << std::endl;
         }
     } else if (!(Type1 == Float && Type2 == Int) && !(Type1 == Int && Type2 == Float)) {
-        semant_error(this) << "'>=' 's paras should be same,or paras could exchanged." << std::endl;
+        semant_error(this) << "'>=' 's operands  should be same,or paras could exchanged." << std::endl;
     }
     this->setType(Bool);
     return this->type;
@@ -620,10 +632,10 @@ Symbol Gt_class::checkType(){
     Symbol Type2 = this->e2->checkType();
     if (Type1 == Type2) {
         if ( Type1 != Int && Type1 != Float && Type1 != Bool) {
-            semant_error(this) << "'>' expr value must be int and float and bool type and Bool type, not " << Type1 << std::endl;
+            semant_error(this) << "'>' 's operands  must be int and float and bool type and Bool type, not " << Type1 << std::endl;
         }
     } else if (!(Type1 == Float && Type2 == Int) && !(Type1 == Int && Type2 == Float)) {
-        semant_error(this) << "'>' 's paras should be same,or paras could exchanged." << std::endl;
+        semant_error(this) << "'>' 's operands  should be same,or paras could exchanged." << std::endl;
     }
     this->setType(Bool);
     return this->type;
@@ -634,7 +646,7 @@ Symbol And_class::checkType(){
     Symbol Type1 = this->e1->checkType();
     Symbol Type2 = this->e2->checkType();
     if (Type1 != Bool || Type2 != Bool) {
-        semant_error(this) << " 'And' should have both bool type." << std::endl;
+        semant_error(this) << "'And' 's operands should have both bool type." << std::endl;
     }
     this->setType(Bool);
     return this->type;
@@ -645,7 +657,7 @@ Symbol Or_class::checkType(){
     Symbol Type1 = this->e1->checkType();
     Symbol Type2 = this->e2->checkType();
     if (Type1 != Bool || Type2 != Bool) {
-        semant_error(this) << " 'Or' should have both bool type." << std::endl;
+        semant_error(this) << "'Or' 's operands should have both bool type." << std::endl;
     }
     this->setType(Bool);
     return this->type;
@@ -655,11 +667,11 @@ Symbol Or_class::checkType(){
 Symbol Xor_class::checkType(){
     Symbol Type1 = this->e1->checkType();
     Symbol Type2 = this->e2->checkType();
-    if ((Type1 != Type2)||!((Type1 == Bool)||(Type1 == Int))) 
+    if ((Type1 != Type2) || (Type1 != Int)) 
     {
-        semant_error(this) << " 'And' should have both bool or int type." << std::endl;
+        semant_error(this) << "'^' 's operands should have int type." << std::endl;
     }
-    this->setType(Bool);
+    this->setType(Int);
     return this->type;
 
 }
@@ -667,7 +679,7 @@ Symbol Xor_class::checkType(){
 Symbol Not_class::checkType(){
     Symbol Type1 = e1->checkType();
     if (Type1 != Bool) {
-        semant_error(this) << "'!' should have Bool type" << endl;
+        semant_error(this) << "'!' 's operands should have Bool type" << endl;
     }
 
     this->setType(Bool);
@@ -679,7 +691,7 @@ Symbol Bitand_class::checkType(){
     Symbol Type1 = this->e1->checkType();
     Symbol Type2 = this->e2->checkType();
     if (Type1 != Int || Type2 != Int) {
-        semant_error(this) << "Bitand expr should have both Int type." << std::endl;
+        semant_error(this) << "& expr should have both Int type." << std::endl;
     }
     this->setType(Int);
     return this->type;
@@ -690,7 +702,7 @@ Symbol Bitor_class::checkType(){
     Symbol Type1 = this->e1->checkType();
     Symbol Type2 = this->e2->checkType();
     if (Type1 != Int || Type2 != Int) {
-        semant_error(this) << "Bitor expr should have both Int type." << std::endl;
+        semant_error(this) << "| expr should have both Int type." << std::endl;
     }
     this->setType(Int);
     return this->type;
@@ -700,7 +712,7 @@ Symbol Bitor_class::checkType(){
 Symbol Bitnot_class::checkType(){
     Symbol Type1 = e1->checkType();
     if (Type1 != Int) {
-        semant_error(this) << "Bitnot expr should have Int type" << endl;
+        semant_error(this) << "~ expr should have Int type" << endl;
     }
 
     this->setType(Int);
@@ -729,15 +741,16 @@ Symbol Const_bool_class::checkType(){
 }
 
 Symbol Object_class::checkType(){
-    if (objectEnv.lookup(this->var) == NULL) {
-        semant_error(this) << "Object '"<< this->var <<"' has not been defined." << endl;
+    VariableDecl *varDecl = varEnv.lookup(this->var);
+    
+    if (varDecl == NULL) {
+        semant_error(this) << "object "<< this->var->get_string() <<" has not been defined." << endl;
         this->setType(Void);
         return this->type;
     }
-    Symbol varType = lvMap[this->var];
+    Symbol varType = (*varDecl)->getType();
     this->setType(varType);
     return this->type;
-
 }
 
 Symbol No_expr_class::checkType(){

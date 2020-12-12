@@ -219,9 +219,9 @@ typedef list_node<Stmt> Stmts_class;
 typedef Stmts_class *Stmts;
 
 
-StmtBlocks nil_StmtBlocks();
-StmtBlocks single_StmtBlocks(StmtBlock);
-StmtBlocks append_StmtBlocks(StmtBlocks,StmtBlocks);
+// StmtBlocks nil_StmtBlocks();
+// StmtBlocks single_StmtBlocks(StmtBlock);
+// StmtBlocks append_StmtBlocks(StmtBlocks,StmtBlocks);
 
 
 Stmts nil_Stmts();
@@ -229,34 +229,34 @@ Stmts single_Stmts(Stmt);
 Stmts append_Stmts(Stmts,Stmts);
 
 
-IfStmts nil_IfStmts();
-IfStmts single_IfStmts(IfStmt);
-IfStmts append_IfStmts(IfStmts,IfStmts);
+// IfStmts nil_IfStmts();
+// IfStmts single_IfStmts(IfStmt);
+// IfStmts append_IfStmts(IfStmts,IfStmts);
 
 
-WhileStmts nil_WhileStmts();
-WhileStmts single_WhileStmts(WhileStmt);
-WhileStmts append_WhileStmts(WhileStmts,WhileStmts);
+// WhileStmts nil_WhileStmts();
+// WhileStmts single_WhileStmts(WhileStmt);
+// WhileStmts append_WhileStmts(WhileStmts,WhileStmts);
 
 
-ForStmts nil_ForStmts();
-ForStmts single_ForStmts(ForStmt);
-ForStmts append_ForStmts(ForStmts,ForStmts);
+// ForStmts nil_ForStmts();
+// ForStmts single_ForStmts(ForStmt);
+// ForStmts append_ForStmts(ForStmts,ForStmts);
 
 
-ReturnStmts nil_ReturnStmts();
-ReturnStmts single_ReturnStmts(ReturnStmt);
-ReturnStmts append_ReturnStmts(ReturnStmts,ReturnStmts);
+// ReturnStmts nil_ReturnStmts();
+// ReturnStmts single_ReturnStmts(ReturnStmt);
+// ReturnStmts append_ReturnStmts(ReturnStmts,ReturnStmts);
 
 
-ContinueStmts nil_ContinueStmts();
-ContinueStmts single_ContinueStmts(ContinueStmt);
-ContinueStmts append_ContinueStmts(ContinueStmts,ContinueStmts);
+// ContinueStmts nil_ContinueStmts();
+// ContinueStmts single_ContinueStmts(ContinueStmt);
+// ContinueStmts append_ContinueStmts(ContinueStmts,ContinueStmts);
 
 
-BreakStmts nil_BreakStmts();
-BreakStmts single_BreakStmts(BreakStmt);
-BreakStmts append_BreakStmts(BreakStmts,BreakStmts);
+// BreakStmts nil_BreakStmts();
+// BreakStmts single_BreakStmts(BreakStmt);
+// BreakStmts append_BreakStmts(BreakStmts,BreakStmts);
 
 Program program(Decls);
 StmtBlock stmtBlock(VariableDecls, Stmts);

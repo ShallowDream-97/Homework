@@ -55,7 +55,7 @@ public:
    void dump_with_types(ostream&,int);
    bool isCallDecl(){return false;};
    void checkPara(){
-
+      // variableDecl has no parameters
    }
 };
 
