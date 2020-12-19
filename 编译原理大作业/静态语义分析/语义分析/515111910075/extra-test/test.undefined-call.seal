@@ -1,0 +1,10 @@
+/* 
+this a correct example of SEAL 
+*/
+var a Int;
+func main() Void{
+    var a Int;
+    
+    print();
+    return;
+}
